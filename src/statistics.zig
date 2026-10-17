@@ -44,7 +44,7 @@ const Repository = struct {
             "Trying to get lines of code changed for {s}...",
             .{self.name},
         );
-        const response = try client.rest(
+        const response = client.rest(
             try std.mem.concat(
                 arena.allocator(),
                 u8,
@@ -54,7 +54,15 @@ const Repository = struct {
                     "/stats/contributors",
                 },
             ),
-        );
+        ) catch |err| {
+            // Huge repos can return truncated responses; treat lines changed
+            // as unknown rather than failing the whole run
+            std.log.info(
+                "Skipping lines changed in {s} ({s})",
+                .{ self.name, @errorName(err) },
+            );
+            return .ok;
+        };
         defer client.allocator.free(response.body);
         if (response.status == .ok) {
             self.lines_changed = 0;
@@ -658,11 +666,9 @@ fn getLinesChanged(
                     "Failed to get contribution data for {s} ({?s})",
                     .{ item.repo.name, status.phrase() },
                 );
-                std.log.err(
-                    "Request failed with response {?s}",
-                    .{status.phrase()},
-                );
-                return error.RequestFailed;
+                // e.g. 504 when GitHub times out computing stats for a huge
+                // repo; skip it instead of failing the whole run
+                continue;
             },
         }
     }
